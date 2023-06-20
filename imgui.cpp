@@ -397,6 +397,7 @@ CODE
  When you are not sure about an old symbol or function name, try using the Search/Find function of your IDE to look for comments or references in all imgui files.
  You can read releases logs https://github.com/ocornut/imgui/releases for more details.
 
+ - 2023/06/20 (1.89.7) - moved io.HoverDelayShort/io.HoverDelayNormal to style.HoverDelayShort/style.HoverDelayNormal. As the fields were added in 1.89 and expected to be left unchanged by most users, or only tweaked once during app initialization, we are exceptionally accepting the breakage.
  - 2023/05/30 (1.89.6) - backends: renamed "imgui_impl_sdlrenderer.cpp" to "imgui_impl_sdlrenderer2.cpp" and "imgui_impl_sdlrenderer.h" to "imgui_impl_sdlrenderer2.h". This is in prevision for the future release of SDL3.
  - 2023/05/22 (1.89.6) - listbox: commented out obsolete/redirecting functions that were marked obsolete more than two years ago:
                            - ListBoxHeader()  -> use BeginListBox() (note how two variants of ListBoxHeader() existed. Check commented versions in imgui.h for reference)
@@ -1162,6 +1163,13 @@ ImGuiStyle::ImGuiStyle()
     CurveTessellationTol    = 1.25f;            // Tessellation tolerance when using PathBezierCurveTo() without a specific number of segments. Decrease for highly tessellated curves (higher quality, more polygons), increase to reduce quality.
     CircleTessellationMaxError = 0.30f;         // Maximum error (in pixels) allowed when using AddCircle()/AddCircleFilled() or drawing rounded corner rectangles with no explicit segment count specified. Decrease for higher quality but more geometry.
 
+    // Behaviors
+    HoverStationaryDelay    = 0.15f;            // Delay for IsItemHovered(ImGuiHoveredFlags_Stationary). Time required to consider mouse stationary.
+    HoverDelayShort         = 0.15f;            // Delay for IsItemHovered(ImGuiHoveredFlags_DelayShort). Usually used along with HoverStationaryDelay.
+    HoverDelayNormal        = 0.40f;            // Delay for IsItemHovered(ImGuiHoveredFlags_DelayNormal). "
+    HoverFlagsForTooltipMouse = ImGuiHoveredFlags_Stationary | ImGuiHoveredFlags_DelayShort;    // Default flags when using IsItemHovered(ImGuiHoveredFlags_ForTooltip) or BeginItemTooltip()/SetItemTooltip() while using mouse.
+    HoverFlagsForTooltipNav = ImGuiHoveredFlags_NoSharedDelay | ImGuiHoveredFlags_DelayNormal;  // Default flags when using IsItemHovered(ImGuiHoveredFlags_ForTooltip) or BeginItemTooltip()/SetItemTooltip() while using keyboard/gamepad.
+
     // Default theme
     ImGui::StyleColorsDark(this);
 }
@@ -1210,16 +1218,10 @@ ImGuiIO::ImGuiIO()
     IniSavingRate = 5.0f;
     IniFilename = "imgui.ini"; // Important: "imgui.ini" is relative to current working dir, most apps will want to lock this to an absolute path (e.g. same path as executables).
     LogFilename = "imgui_log.txt";
-    MouseDoubleClickTime = 0.30f;
-    MouseDoubleClickMaxDist = 6.0f;
 #ifndef IMGUI_DISABLE_OBSOLETE_KEYIO
     for (int i = 0; i < ImGuiKey_COUNT; i++)
         KeyMap[i] = -1;
 #endif
-    KeyRepeatDelay = 0.275f;
-    KeyRepeatRate = 0.050f;
-    HoverDelayNormal = 0.35f;
-    HoverDelayShort = 0.10f;
     UserData = NULL;
 
     Fonts = NULL;
@@ -1227,6 +1229,12 @@ ImGuiIO::ImGuiIO()
     FontDefault = NULL;
     FontAllowUserScaling = false;
     DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+
+    MouseDoubleClickTime = 0.30f;
+    MouseDoubleClickMaxDist = 6.0f;
+    MouseDragThreshold = 6.0f;
+    KeyRepeatDelay = 0.275f;
+    KeyRepeatRate = 0.050f;
 
     // Miscellaneous options
     MouseDrawCursor = false;
@@ -1254,7 +1262,6 @@ ImGuiIO::ImGuiIO()
     MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
     MousePosPrev = ImVec2(-FLT_MAX, -FLT_MAX);
     MouseSource = ImGuiMouseSource_Mouse;
-    MouseDragThreshold = 6.0f;
     for (int i = 0; i < IM_ARRAYSIZE(MouseDownDuration); i++) MouseDownDuration[i] = MouseDownDurationPrev[i] = -1.0f;
     for (int i = 0; i < IM_ARRAYSIZE(KeysData); i++) { KeysData[i].DownDuration = KeysData[i].DownDurationPrev = -1.0f; }
     AppAcceptingEvents = true;
@@ -3926,6 +3933,16 @@ bool ImGui::IsWindowContentHoverable(ImGuiWindow* window, ImGuiHoveredFlags flag
     return true;
 }
 
+static inline float CalcDelayFromHoveredFlags(ImGuiHoveredFlags flags)
+{
+    ImGuiContext& g = *GImGui;
+    if (flags & ImGuiHoveredFlags_DelayShort)
+        return g.Style.HoverDelayShort;
+    if (flags & ImGuiHoveredFlags_DelayNormal)
+        return g.Style.HoverDelayNormal;
+    return 0.0f;
+}
+
 // This is roughly matching the behavior of internal-facing ItemHoverable()
 // - we allow hovering to be true when ActiveId==window->MoveID, so that clicking on non-interactive items such as a Text() item still returns true with IsItemHovered()
 // - this should work even for non-interactive items that have no ID, so we cannot use LastItemId
@@ -3933,12 +3950,17 @@ bool ImGui::IsItemHovered(ImGuiHoveredFlags flags)
 {
     ImGuiContext& g = *GImGui;
     ImGuiWindow* window = g.CurrentWindow;
+    IM_ASSERT((flags & ~ImGuiHoveredFlags_AllowedMaskForIsItemHovered) == 0 && "Invalid flags for IsItemHovered()!");
+
     if (g.NavDisableMouseHover && !g.NavDisableHighlight && !(flags & ImGuiHoveredFlags_NoNavOverride))
     {
         if ((g.LastItemData.InFlags & ImGuiItemFlags_Disabled) && !(flags & ImGuiHoveredFlags_AllowWhenDisabled))
             return false;
         if (!IsItemFocused())
             return false;
+
+        if (flags & ImGuiHoveredFlags_ForTooltip)
+            flags |= g.Style.HoverFlagsForTooltipNav;
     }
     else
     {
@@ -3946,6 +3968,10 @@ bool ImGui::IsItemHovered(ImGuiHoveredFlags flags)
         ImGuiItemStatusFlags status_flags = g.LastItemData.StatusFlags;
         if (!(status_flags & ImGuiItemStatusFlags_HoveredRect))
             return false;
+
+        if (flags & ImGuiHoveredFlags_ForTooltip)
+            flags |= g.Style.HoverFlagsForTooltipMouse;
+
         IM_ASSERT((flags & (ImGuiHoveredFlags_AnyWindow | ImGuiHoveredFlags_RootWindow | ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_NoPopupHierarchy)) == 0);   // Flags not supported by this function
 
         // Done with rectangle culling so we can perform heavier checks now
@@ -3980,20 +4006,22 @@ bool ImGui::IsItemHovered(ImGuiHoveredFlags flags)
 
     // Handle hover delay
     // (some ideas: https://www.nngroup.com/articles/timing-exposing-content)
-    float delay;
-    if (flags & ImGuiHoveredFlags_DelayNormal)
-        delay = g.IO.HoverDelayNormal;
-    else if (flags & ImGuiHoveredFlags_DelayShort)
-        delay = g.IO.HoverDelayShort;
-    else
-        delay = 0.0f;
-    if (delay > 0.0f)
+    const float delay = CalcDelayFromHoveredFlags(flags);
+    if (delay > 0.0f || (flags & ImGuiHoveredFlags_Stationary))
     {
         ImGuiID hover_delay_id = (g.LastItemData.ID != 0) ? g.LastItemData.ID : window->GetIDFromRectangle(g.LastItemData.Rect);
         if ((flags & ImGuiHoveredFlags_NoSharedDelay) && (g.HoverItemDelayIdPreviousFrame != hover_delay_id))
             g.HoverItemDelayTimer = 0.0f;
         g.HoverItemDelayId = hover_delay_id;
-        return g.HoverItemDelayTimer >= delay;
+
+        // When changing hovered item we requires a bit of stationary delay before activating hover timer,
+        // but once unlocked on a given item we also moving.
+        //if (g.HoverDelayTimer >= delay && (g.HoverDelayTimer - g.IO.DeltaTime < delay || g.MouseStationaryTimer - g.IO.DeltaTime < g.Style.HoverStationaryDelay)) { IMGUI_DEBUG_LOG("HoverDelayTimer = %f/%f, MouseStationaryTimer = %f\n", g.HoverDelayTimer, delay, g.MouseStationaryTimer); }
+        if ((flags & ImGuiHoveredFlags_Stationary) != 0 && g.HoverItemUnlockedStationaryId != hover_delay_id)
+            return false;
+
+        if (g.HoverItemDelayTimer < delay)
+            return false;
     }
 
     return true;
@@ -4537,11 +4565,22 @@ void ImGui::NewFrame()
     }
 #endif
 
+    // Record when we have been stationary as this state is preserved while over same item.
+    // FIXME: The way this is expressed means user cannot alter HoverStationaryDelay during the frame to use varying values.
+    // To allow this we should store HoverItemMaxStationaryTime+ID and perform the >= check in IsItemHovered() function.
+    if (g.HoverItemDelayId != 0 && g.MouseStationaryTimer >= g.Style.HoverStationaryDelay)
+        g.HoverItemUnlockedStationaryId = g.HoverItemDelayId;
+    else if (g.HoverItemDelayId == 0)
+        g.HoverItemUnlockedStationaryId = 0;
+    if (g.HoveredWindow != NULL && g.MouseStationaryTimer >= g.Style.HoverStationaryDelay)
+        g.HoverWindowUnlockedStationaryId = g.HoveredWindow->ID;
+    else if (g.HoveredWindow == NULL)
+        g.HoverWindowUnlockedStationaryId = 0;
+
     // Update hover delay for IsItemHovered() with delays and tooltips
     g.HoverItemDelayIdPreviousFrame = g.HoverItemDelayId;
     if (g.HoverItemDelayId != 0)
     {
-        //if (g.IO.MouseDelta.x == 0.0f && g.IO.MouseDelta.y == 0.0f) // Need design/flags
         g.HoverItemDelayTimer += g.IO.DeltaTime;
         g.HoverItemDelayClearTimer = 0.0f;
         g.HoverItemDelayId = 0;
@@ -4549,7 +4588,7 @@ void ImGui::NewFrame()
     else if (g.HoverItemDelayTimer > 0.0f)
     {
         // This gives a little bit of leeway before clearing the hover timer, allowing mouse to cross gaps
-        // We could expose 0.25f as io.HoverClearDelay but I am not sure of the logic yet, this is particularly subtle.
+        // We could expose 0.25f as style.HoverClearDelay but I am not sure of the logic yet, this is particularly subtle.
         g.HoverItemDelayClearTimer += g.IO.DeltaTime;
         if (g.HoverItemDelayClearTimer >= ImMax(0.25f, g.IO.DeltaTime * 2.0f)) // ~7 frames at 30 Hz + allow for low framerate
             g.HoverItemDelayTimer = g.HoverItemDelayClearTimer = 0.0f; // May want a decaying timer, in which case need to clamp at max first, based on max of caller last requested timer.
@@ -7215,7 +7254,8 @@ bool ImGui::IsWindowAbove(ImGuiWindow* potential_above, ImGuiWindow* potential_b
 
 bool ImGui::IsWindowHovered(ImGuiHoveredFlags flags)
 {
-    IM_ASSERT((flags & (ImGuiHoveredFlags_AllowWhenOverlapped | ImGuiHoveredFlags_AllowWhenDisabled)) == 0);   // Flags not supported by this function
+    IM_ASSERT((flags & ~ImGuiHoveredFlags_AllowedMaskForIsWindowHovered) == 0 && "Invalid flags for IsWindowHovered()!");
+
     ImGuiContext& g = *GImGui;
     ImGuiWindow* ref_window = g.HoveredWindow;
     ImGuiWindow* cur_window = g.CurrentWindow;
@@ -7243,6 +7283,17 @@ bool ImGui::IsWindowHovered(ImGuiHoveredFlags flags)
     if (!(flags & ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
         if (g.ActiveId != 0 && !g.ActiveIdAllowOverlap && g.ActiveId != ref_window->MoveId)
             return false;
+
+    // When changing hovered window we requires a bit of stationary delay before activating hover timer.
+    // FIXME: We don't support delay other than stationary one for now, other delay would need a way
+    // to fullfill the possibility that multiple IsWindowHovered() with varying flag could return true
+    // for different windows of the hierarchy. Possibly need a Hash(Current+Flags) ==> (Timer) cache.
+    // We can implement this for _Stationary because the data is linked to HoveredWindow rather than CurrentWindow.
+    if (flags & ImGuiHoveredFlags_ForTooltip)
+        flags |= g.Style.HoverFlagsForTooltipMouse;
+    if ((flags & ImGuiHoveredFlags_Stationary) != 0 && g.HoverWindowUnlockedStationaryId != ref_window->ID)
+        return false;
+
     return true;
 }
 
@@ -8528,9 +8579,17 @@ static void ImGui::UpdateMouseInputs()
     else
         io.MouseDelta = ImVec2(0.0f, 0.0f);
 
+    // Update stationary timer. Only reset on 2 successive moving frames.
+    // FIXME: May need to expose threshold or treat touch inputs differently.
+    const float mouse_stationary_threshold = (io.MouseSource == ImGuiMouseSource_Mouse) ? 2.0f : 3.0f; // Slightly higher threshold for ImGuiMouseSource_TouchScreen/ImGuiMouseSource_Pen, may need rework.
+    g.MouseMovingFrames = (ImLengthSqr(io.MouseDelta) >= mouse_stationary_threshold * mouse_stationary_threshold) ? (g.MouseMovingFrames + 1) : 0;
+    if (g.MouseMovingFrames == 0)
+        g.MouseStationaryTimer += io.DeltaTime;
+    else if (g.MouseMovingFrames > 1)
+        g.MouseStationaryTimer = 0.0f;
+
     // If mouse moved we re-enable mouse hovering in case it was disabled by gamepad/keyboard. In theory should use a >0.0f threshold but would need to reset in everywhere we set this to true.
-    const bool is_stationary = (g.IO.MouseDelta.x == 0.0f && g.IO.MouseDelta.y == 0.0f);
-    if (!is_stationary)
+    if (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f)
         g.NavDisableMouseHover = false;
 
     io.MousePosPrev = io.MousePos;
@@ -10049,6 +10108,13 @@ bool ImGui::BeginTooltip()
     return BeginTooltipEx(ImGuiTooltipFlags_None, ImGuiWindowFlags_None);
 }
 
+bool ImGui::BeginItemTooltip()
+{
+    if (!IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+        return false;
+    return BeginTooltipEx(ImGuiTooltipFlags_None, ImGuiWindowFlags_None);
+}
+
 bool ImGui::BeginTooltipEx(ImGuiTooltipFlags tooltip_flags, ImGuiWindowFlags extra_window_flags)
 {
     ImGuiContext& g = *GImGui;
@@ -10094,6 +10160,14 @@ void ImGui::EndTooltip()
     End();
 }
 
+void ImGui::SetTooltip(const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    SetTooltipV(fmt, args);
+    va_end(args);
+}
+
 void ImGui::SetTooltipV(const char* fmt, va_list args)
 {
     if (!BeginTooltipEx(ImGuiTooltipFlags_OverridePrevious, ImGuiWindowFlags_None))
@@ -10102,13 +10176,23 @@ void ImGui::SetTooltipV(const char* fmt, va_list args)
     EndTooltip();
 }
 
-void ImGui::SetTooltip(const char* fmt, ...)
+// Shortcut to use 'style.HoverFlagsForTooltipMouse' or 'style.HoverFlagsForTooltipNav'.
+// Defaults to == ImGuiHoveredFlags_Stationary | ImGuiHoveredFlags_DelayShort when using the mouse.
+void ImGui::SetItemTooltip(const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    SetTooltipV(fmt, args);
+    if (IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+        SetTooltipV(fmt, args);
     va_end(args);
 }
+
+void ImGui::SetItemTooltipV(const char* fmt, va_list args)
+{
+    if (IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+        SetTooltipV(fmt, args);
+}
+
 
 //-----------------------------------------------------------------------------
 // [SECTION] POPUPS
@@ -13493,7 +13577,7 @@ void ImGui::DebugTextEncoding(const char* str)
 static void MetricsHelpMarker(const char* desc)
 {
     ImGui::TextDisabled("(?)");
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && ImGui::BeginTooltip())
+    if (ImGui::BeginItemTooltip())
     {
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
         ImGui::TextUnformatted(desc);
@@ -13588,7 +13672,7 @@ void ImGui::ShowMetricsWindow(bool* p_open)
             else if (rect_type == WRT_InnerRect)            { return window->InnerRect; }
             else if (rect_type == WRT_InnerClipRect)        { return window->InnerClipRect; }
             else if (rect_type == WRT_WorkRect)             { return window->WorkRect; }
-            else if (rect_type == WRT_Content)       { ImVec2 min = window->InnerRect.Min - window->Scroll + window->WindowPadding; return ImRect(min, min + window->ContentSize); }
+            else if (rect_type == WRT_Content)              { ImVec2 min = window->InnerRect.Min - window->Scroll + window->WindowPadding; return ImRect(min, min + window->ContentSize); }
             else if (rect_type == WRT_ContentIdeal)         { ImVec2 min = window->InnerRect.Min - window->Scroll + window->WindowPadding; return ImRect(min, min + window->ContentSizeIdeal); }
             else if (rect_type == WRT_ContentRegionRect)    { return window->ContentRegionRect; }
             IM_ASSERT(0);
@@ -13893,6 +13977,7 @@ void ImGui::ShowMetricsWindow(bool* p_open)
             Text("Mouse clicked:");  for (int i = 0; i < count; i++) if (IsMouseClicked(i)) { SameLine(); Text("b%d (%d)", i, io.MouseClickedCount[i]); }
             Text("Mouse released:"); for (int i = 0; i < count; i++) if (IsMouseReleased(i)) { SameLine(); Text("b%d", i); }
             Text("Mouse wheel: %.1f", io.MouseWheel);
+            Text("MouseStationaryTimer: %.2f", g.MouseStationaryTimer);
             Text("Mouse source: %s", GetMouseSourceName(io.MouseSource));
             Text("Pen Pressure: %.1f", io.PenPressure); // Note: currently unused
             Unindent();
