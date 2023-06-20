@@ -48,7 +48,8 @@ bool ImGui_ImplRenderWare_Init();
 void ImGui_ImplRenderWare_NewFrame();
 void ImGui_ImplRenderWare_ShutDown();
 
-static bool bClearMousePos = false;
+#define FRAMES_TO_CLEAR_MOUSE 3
+static char nClearMousePos = 0;
 DECL_HOOK(bool, InitRenderware)
 {
     if(!InitRenderware()) return false;
@@ -77,7 +78,7 @@ DECL_HOOK(bool, InitRenderware)
 DECL_HOOKv(ShutdownRenderware)
 {
     ImGui_ImplRenderWare_ShutDown();
-	ImGui::DestroyContext();
+    ImGui::DestroyContext();
     ShutdownRenderware();
 }
 bool bDisplaySpecialImGuiMenu = false, bAlwaysShow = false;
@@ -91,17 +92,17 @@ DECL_HOOKv(Render2DStuff)
 
     // ImGui's mod special window START
     ImGui::SetNextWindowBgAlpha(bDisplaySpecialImGuiMenu ? 0.82f : 0.0f);
-    ImGui::Begin("Menu##imgui", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
+    ImGui::Begin("ImGuiMenu", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
     ImGui::SetWindowPos(zeroVec);
-    ImGui::SetWindowSize(displaySize);
     ImGui::SetCursorPosX(0.5f * nDisplayX);
     ImGui::Checkbox("ImGui Menu", &bDisplaySpecialImGuiMenu);
     if(bDisplaySpecialImGuiMenu || bAlwaysShow)
     {
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(0.666f * nDisplayX);
-        ImGui::Checkbox("Show Always", &bAlwaysShow);
-        ImGui::NewLine();
+        ImGui::SetWindowSize(displaySize);
+        //ImGui::SameLine();
+        //ImGui::SetCursorPosX(0.666f * nDisplayX);
+        //ImGui::Checkbox("Show Always", &bAlwaysShow);
+        //ImGui::NewLine();
         ImVec2 av = ImGui::GetContentRegionAvail();
         float padding = av.x * 0.04f;
         float twopadding = 2.0f * padding;
@@ -119,7 +120,7 @@ DECL_HOOKv(Render2DStuff)
             }
             ImGui::EndChild();
         }
-    }
+    } else ImGui::SetWindowSize(zeroVec);
     ImGui::End();
     // ImGui's mod special window END
 
@@ -137,11 +138,10 @@ DECL_HOOKv(Render2DStuff)
     ImGui::Render();
     ImGui_ImplRenderWare_RenderDrawData(ImGui::GetDrawData());
 
-    if(bClearMousePos)
+    if(nClearMousePos > 0)
     {
         //io.MousePos.x = io.MousePos.y = -1;
-        io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
-        bClearMousePos = false;
+        if(--nClearMousePos == 0) io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
     }
 }
 
@@ -198,7 +198,7 @@ DECL_HOOKv(OnTouchEvent, int type, int fingerId, int x, int y)
         {
             if(fingerAsMouse == fingerId)
             {
-                bClearMousePos = true;
+                nClearMousePos = FRAMES_TO_CLEAR_MOUSE;
                 //io.MouseDown[0] = false;
                 io.AddMouseButtonEvent(0, false);
                 
