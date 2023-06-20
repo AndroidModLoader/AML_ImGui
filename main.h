@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <vector>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <iimgui.h>
 #include "RW/RenderWare.h"
 

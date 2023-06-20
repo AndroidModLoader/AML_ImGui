@@ -68,7 +68,7 @@ DECL_HOOK(bool, InitRenderware)
     style.WindowBorderSize = 0.0f;
     ImGui::StyleColorsDark();
 
-    imgui.m_pFont = io.Fonts->AddFontFromMemoryTTF((void*)arialData, sizeof(arialData), ScaleY(30.0f), nullptr, ranges);
+    imgui.m_pFont = io.Fonts->AddFontFromMemoryTTF((void*)arialData, sizeof(arialData), ScaleY(34.0f), nullptr, ranges);
 
     displaySize.x = nDisplayX;
     displaySize.y = nDisplayY;
@@ -91,23 +91,20 @@ DECL_HOOKv(Render2DStuff)
     ImGuiIO& io = ImGui::GetIO();
 
     // ImGui's mod special window START
-    ImGui::SetNextWindowBgAlpha(bDisplaySpecialImGuiMenu ? 0.82f : 0.0f);
-    ImGui::Begin("ImGuiMenu", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
-    ImGui::SetWindowPos(zeroVec);
-    ImGui::SetCursorPosX(0.5f * nDisplayX);
-    ImGui::Checkbox("ImGui Menu", &bDisplaySpecialImGuiMenu);
     if(bDisplaySpecialImGuiMenu || bAlwaysShow)
     {
-        ImGui::SetWindowSize(displaySize);
+        ImGui::SetNextWindowBgAlpha(0.82f);
+        ImGui::Begin("ImGuiMenu", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
         //ImGui::SameLine();
         //ImGui::SetCursorPosX(0.666f * nDisplayX);
         //ImGui::Checkbox("Show Always", &bAlwaysShow);
         //ImGui::NewLine();
+        ImGui::SetWindowSize(displaySize);
+        ImGui::SetWindowPos(zeroVec, true);
         ImVec2 av = ImGui::GetContentRegionAvail();
-        float padding = av.x * 0.04f;
-        float twopadding = 2.0f * padding;
+        float padding = av.x * 0.03f;
         ImGui::SetNextWindowPos(ImVec2(padding, padding));
-        if(ImGui::BeginChild("ImGuiMenuChild", ImVec2((float)nDisplayX - twopadding, av.y - padding), true))
+        if(ImGui::BeginChild("ImGuiMenuChild", ImVec2((float)nDisplayX - 2.0f * padding, av.y - padding), true))
         {
             auto end = imgui.m_pMenuRenderListeners.end();
             for (auto it = imgui.m_pMenuRenderListeners.begin(); it != end; ++it)
@@ -120,8 +117,8 @@ DECL_HOOKv(Render2DStuff)
             }
             ImGui::EndChild();
         }
-    } else ImGui::SetWindowSize(zeroVec);
-    ImGui::End();
+        ImGui::End();
+    }
     // ImGui's mod special window END
 
     // Render from mods START
@@ -134,6 +131,16 @@ DECL_HOOKv(Render2DStuff)
         }
     }
     // Render from mods END
+
+    // Our button should be the latest! Always visible and always clickable!
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    ImGui::Begin("ImGuiMenuButton", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
+    ImGui::SetWindowPos({displaySize.x - 1.25f * ImGui::GetWindowWidth(), displaySize.y - ImGui::GetWindowHeight()}, true);
+    ImGui::Checkbox("ImGui Menu", &bDisplaySpecialImGuiMenu);
+    ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+    ImGui::End();
+
+    // Render the data
     ImGui::EndFrame();
     ImGui::Render();
     ImGui_ImplRenderWare_RenderDrawData(ImGui::GetDrawData());
