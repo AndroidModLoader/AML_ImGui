@@ -105,7 +105,6 @@ bool ImGui_ImplRenderWare_Init()
     ImGuiIO &io = ImGui::GetIO();
 
     io.DisplaySize = ImVec2((float)RsGlobal->maximumWidth, (float)RsGlobal->maximumHeight);
-    logger->Info("Display size: %f, %f", io.DisplaySize.x, io.DisplaySize.y);
 
     return true;
 }

@@ -1,6 +1,7 @@
 #include <mod/amlmod.h>
 #include <mod/logger.h>
 
+#include <string>
 #include "main.h"
 #include "arial.h"
 
@@ -8,7 +9,7 @@ MYMOD(net.rusjj.imgui, DearImGui, 1.0.0, ocornut & RusJJ)
 
 static IM imgui;
 IImGui* pImGui = &imgui;
-ImGuiContext* imguiCtx = nullptr;
+ImGuiContext *imguiCtx = NULL;
 
 static const ImWchar ranges[] = {
     0x0020, 0x0080,
@@ -50,29 +51,31 @@ void ImGui_ImplRenderWare_ShutDown();
 
 #define FRAMES_TO_CLEAR_MOUSE 3
 static char nClearMousePos = 0;
+ImFont* kbFont;
 DECL_HOOK(bool, InitRenderware)
 {
     if(!InitRenderware()) return false;
-
     InitRenderWareFunctions();
+
+    // Main
+    nDisplayX = RsGlobal->maximumWidth;
+    nDisplayY = RsGlobal->maximumHeight;
+    flScaleX = nDisplayY * 0.00052083333f; // 1/1920
+    flScaleY = nDisplayY * 0.00092592592f; // 1/1080
+    displaySize.x = nDisplayX;
+    displaySize.y = nDisplayY;
+    bImGuiInitialized = true;
+
+    // Main context
     imguiCtx = ImGui::CreateContext();
     ImGui_ImplRenderWare_Init();
     ImGuiIO &io = ImGui::GetIO();
     ImGuiStyle& style = ImGui::GetStyle();
-
-    nDisplayX = RsGlobal->maximumWidth;
-    nDisplayY = RsGlobal->maximumHeight;
-    flScaleX = io.DisplaySize.x * 0.00052083333f; // 1/1920
-    flScaleY = io.DisplaySize.y * 0.00092592592f; // 1/1080
     style.ScrollbarSize = ScaleY(55.0f);
     style.WindowBorderSize = 0.0f;
     ImGui::StyleColorsDark();
+    imgui.m_pFont = io.Fonts->AddFontFromMemoryTTF((void*)arialData, sizeof(arialData), ScaleY(34.0f), NULL, ranges);
 
-    imgui.m_pFont = io.Fonts->AddFontFromMemoryTTF((void*)arialData, sizeof(arialData), ScaleY(34.0f), nullptr, ranges);
-
-    displaySize.x = nDisplayX;
-    displaySize.y = nDisplayY;
-    bImGuiInitialized = true;
     return true;
 }
 DECL_HOOKv(ShutdownRenderware)
@@ -81,7 +84,58 @@ DECL_HOOKv(ShutdownRenderware)
     ImGui::DestroyContext();
     ShutdownRenderware();
 }
-bool bDisplaySpecialImGuiMenu = false, bAlwaysShow = false;
+bool bDisplaySpecialImGuiMenu = false;
+ImGuiID LastFocus = -1, LastActive = -1;
+ImGuiWindow* LastWindow;
+inline void KeyboardButton(ImGuiIO& io, const char* text, const char actualKey)
+{
+    if (ImGui::Button(text, ImVec2(ScaleX(actualKey==' '?750.0f:250.0f), ScaleX(160.0f))))
+    {
+        ImGui::SetFocusID(LastFocus, LastWindow);
+        ImGui::SetActiveID(LastActive, LastWindow);
+        io.AddInputCharacter(actualKey);
+    }
+}
+inline bool KeyboardButtonNaked(const char* text)
+{
+    return (ImGui::Button(text, ImVec2(ScaleX(250.0f), ScaleX(160.0f))));
+}
+inline void RestoreFocus()
+{
+    ImGui::SetFocusID(LastFocus, LastWindow);
+    ImGui::SetActiveID(LastActive, LastWindow);
+}
+int language = 0;
+bool shift = false;
+inline const char* GetLineChars(unsigned char line)
+{
+    switch(language)
+    {
+        case 0:
+        {
+            switch(line)
+            {
+                case 1: return shift ? "~!@#$%^&*()_+" : "`1234567890-=";
+                case 2: return shift ? "QWERTYUIOP{}|" : "qwertyuiop[]\\";
+                case 3: return shift ? "ASDFGHJKL:\"" : "asdfghjkl;'";
+                case 4: return shift ? "ZXCVBNM<>?" : "zxcvbnm,./";
+            }
+            break;
+        }
+        case 1:
+        {
+            switch(line)
+            {
+                case 1: return shift ? "Ё!\"№;%:?*()_+" : "ё1234567890-=";
+                case 2: return shift ? "ЙЦУКЕНГШЩЗХЪ\\" : "йцукенгшщзхъ\\";
+                case 3: return shift ? "ФЫВАПРОЛДЖЭ" : "фывапролджэ";
+                case 4: return shift ? "ЯЧСМИТЬБЮ," : "ячсмитьбю.";
+            }
+            break;
+        }
+    }
+    return "";
+}
 DECL_HOOKv(Render2DStuff)
 {
     Render2DStuff();
@@ -91,18 +145,14 @@ DECL_HOOKv(Render2DStuff)
     ImGuiIO& io = ImGui::GetIO();
 
     // ImGui's mod special window START
-    if(bDisplaySpecialImGuiMenu || bAlwaysShow)
+    if(bDisplaySpecialImGuiMenu)
     {
         ImGui::SetNextWindowBgAlpha(0.82f);
         ImGui::Begin("ImGuiMenu", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
-        //ImGui::SameLine();
-        //ImGui::SetCursorPosX(0.666f * nDisplayX);
-        //ImGui::Checkbox("Show Always", &bAlwaysShow);
-        //ImGui::NewLine();
         ImGui::SetWindowSize(displaySize);
         ImGui::SetWindowPos(zeroVec, true);
         ImVec2 av = ImGui::GetContentRegionAvail();
-        float padding = av.x * 0.03f;
+        float padding = av.x * 0.018f;
         ImGui::SetNextWindowPos(ImVec2(padding, padding));
         if(ImGui::BeginChild("ImGuiMenuChild", ImVec2((float)nDisplayX - 2.0f * padding, av.y - padding), true))
         {
@@ -122,7 +172,7 @@ DECL_HOOKv(Render2DStuff)
     // ImGui's mod special window END
 
     // Render from mods START
-    if(!bDisplaySpecialImGuiMenu && !bAlwaysShow)
+    if(!bDisplaySpecialImGuiMenu)
     {
         auto end = imgui.m_pRenderListeners.end();
         for (auto it = imgui.m_pRenderListeners.begin(); it != end; ++it)
@@ -135,20 +185,101 @@ DECL_HOOKv(Render2DStuff)
     // Our button should be the latest! Always visible and always clickable!
     ImGui::SetNextWindowBgAlpha(0.0f);
     ImGui::Begin("ImGuiMenuButton", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
+    auto CheckboxWindow = ImGui::GetCurrentWindow();
     ImGui::SetWindowPos({displaySize.x - 1.25f * ImGui::GetWindowWidth(), displaySize.y - ImGui::GetWindowHeight()}, true);
     ImGui::Checkbox("ImGui Menu", &bDisplaySpecialImGuiMenu);
-    ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
     ImGui::End();
 
-    // Render the data
+    /* KEYBOARD */
+    ImGui::BringWindowToDisplayFront(CheckboxWindow);
+    if(io.WantTextInput || LastFocus != -1)
+    {
+        if(LastFocus == -1)
+        {
+            LastWindow = imguiCtx->NavWindow;
+            LastFocus = ImGui::GetFocusID();
+            LastActive = ImGui::GetActiveID();
+        }
+
+        ImGui::SetNextWindowBgAlpha(0.82f);
+        ImGui::Begin("ImGuiKeyboard", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
+
+        io.KeysDown[ImGuiKey_Backspace] = false;
+        auto KeyboardLine = [&io](const char* k)
+        {
+            size_t num = strlen(k), num1 = num - 1;
+            for (size_t i = 0; i < num; i++)
+            {
+                char key_label[4] {0};
+                key_label[0] = *k;
+                if((unsigned char)(*k) > 0xBF)
+                {
+                    ++i;
+                    key_label[1] = *(++k);
+                    KeyboardButton(io, key_label, *(k - 1));
+                }
+                else KeyboardButton(io, key_label, *k);
+                ++k;
+                if (i < num1) ImGui::SameLine();
+            }
+        };
+
+        // Line 1
+        KeyboardLine(GetLineChars(1));
+        ImGui::SameLine();
+        if(KeyboardButtonNaked("Del"))
+        {
+            RestoreFocus();
+            io.KeysDown[ImGuiKey_Backspace] = true;
+        }
+
+        // Line 2
+        KeyboardButton(io, "TAB", '\t'); // ImGuiKey_Tab
+        ImGui::SameLine();
+        KeyboardLine(GetLineChars(2));
+
+        // Line 3
+        if(KeyboardButtonNaked("CAPS"))
+        {
+            RestoreFocus();
+            shift = !shift;
+        }
+        ImGui::SameLine();
+        KeyboardLine(GetLineChars(3));
+
+        // Line 4
+        if(KeyboardButtonNaked(language == 0 ? "ENG" : "РУС"))
+        {
+            RestoreFocus();
+            language = !language;
+        }
+        ImGui::SameLine();
+        KeyboardLine(GetLineChars(4));
+
+        // Line 5
+        if(KeyboardButtonNaked("x")) LastFocus = -1;
+        ImGui::SameLine();
+        ImGui::Text("                                                        ");
+        ImGui::SameLine();
+        KeyboardButton(io, "SPACE", ' ');
+
+        ImGui::SetWindowPos({0, displaySize.y - ImGui::GetWindowHeight()}, true);
+        ImGui::SetWindowSize({displaySize.x, 0});
+        ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+        ImGui::End();
+        // Render the data
+    }
     ImGui::EndFrame();
     ImGui::Render();
     ImGui_ImplRenderWare_RenderDrawData(ImGui::GetDrawData());
+    /* KEYBOARD END */
 
     if(nClearMousePos > 0)
     {
-        //io.MousePos.x = io.MousePos.y = -1;
-        if(--nClearMousePos == 0) io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+        if(--nClearMousePos == 0)
+        {
+            io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+        }
     }
 }
 
@@ -165,6 +296,8 @@ inline bool NeedToIgnore()
 }
 DECL_HOOKv(OnTouchEvent, int type, int fingerId, int x, int y)
 {
+    ImGuiIO* io = &ImGui::GetIO();
+
     bool canProc = CanProcessImTouch();
     if(type == TOUCH_PUSH) ++fingers;
     else if(type == TOUCH_RELEASE) --fingers;
@@ -174,22 +307,19 @@ DECL_HOOKv(OnTouchEvent, int type, int fingerId, int x, int y)
         OnTouchEvent(type, fingerId, x, y);
         return;
     }
-    ImGuiIO& io = ImGui::GetIO();
+    
     switch(type)
     {
         case TOUCH_PUSH:
         {
             if(fingerAsMouse == 0xFF)
             {
-                //io.MousePos = ImVec2(x, y);
-                //io.MouseDown[0] = true;
-                io.AddMousePosEvent(x, y);
-                io.AddMouseButtonEvent(0, true);
+                io->AddMousePosEvent(x, y);
+                io->AddMouseButtonEvent(0, true);
                 
                 fingerAsMouse = fingerId;
             }
             
-            //ImGui::UpdateHoveredWindowAndCaptureFlags();
             if(NeedToIgnore())
             {
                 g_bIgnoredFingers[fingerId] = true;
@@ -206,8 +336,7 @@ DECL_HOOKv(OnTouchEvent, int type, int fingerId, int x, int y)
             if(fingerAsMouse == fingerId)
             {
                 nClearMousePos = FRAMES_TO_CLEAR_MOUSE;
-                //io.MouseDown[0] = false;
-                io.AddMouseButtonEvent(0, false);
+                io->AddMouseButtonEvent(0, false);
                 
                 fingerAsMouse = 0xFF;
             }
@@ -221,9 +350,7 @@ DECL_HOOKv(OnTouchEvent, int type, int fingerId, int x, int y)
         {
             if(fingerAsMouse == fingerId)
             {
-                //io.MousePos = ImVec2(x, y);
-                //ImGui::UpdateHoveredWindowAndCaptureFlags();
-                io.AddMousePosEvent(x, y);
+                io->AddMousePosEvent(x, y);
             }
             
             if(!g_bIgnoredFingers[fingerId]) OnTouchEvent(type, fingerId, x, y);
