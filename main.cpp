@@ -29,10 +29,13 @@ bool bImGuiInitialized = false;
 RwReal* nearScreenZ;
 RwReal* recipNearClip;
 void* pTheCamera = nullptr;
-void (*SetScissorRect)(float*) = nullptr;
-int (*GetScreenFadeStatus)(void*) = nullptr;
+void (*SetScissorRect)(float*);
+int (*GetScreenFadeStatus)(void*);
+void (*GTA_RequestKeyboard)(int);
 int* m_bMenuOpened;
 bool* m_UserPause;
+int* NVtoKK;
+char *KKtoChar, *KKtoShiftedChar;
 
 ImVec2 displaySize;
 ImVec2 zeroVec(0,0);
@@ -100,6 +103,10 @@ inline bool KeyboardButtonNaked(const char* text)
 {
     return (ImGui::Button(text, ImVec2(ScaleX(250.0f), ScaleX(160.0f))));
 }
+inline bool KeyboardButtonNaked2x(const char* text)
+{
+    return (ImGui::Button(text, ImVec2(ScaleX(504.0f), ScaleX(160.0f))));
+}
 inline void RestoreFocus()
 {
     ImGui::SetFocusID(LastFocus, LastWindow);
@@ -152,9 +159,9 @@ DECL_HOOKv(Render2DStuff)
         ImGui::SetWindowSize(displaySize);
         ImGui::SetWindowPos(zeroVec, true);
         ImVec2 av = ImGui::GetContentRegionAvail();
-        float padding = av.x * 0.018f;
+        float padding = av.x * 0.01f, twopadding = 2.0f * padding;
         ImGui::SetNextWindowPos(ImVec2(padding, padding));
-        if(ImGui::BeginChild("ImGuiMenuChild", ImVec2((float)nDisplayX - 2.0f * padding, av.y - padding), true))
+        if(ImGui::BeginChild("ImGuiMenuChild", ImVec2((float)nDisplayX - twopadding, av.y - twopadding), true))
         {
             auto end = imgui.m_pMenuRenderListeners.end();
             for (auto it = imgui.m_pMenuRenderListeners.begin(); it != end; ++it)
@@ -192,7 +199,8 @@ DECL_HOOKv(Render2DStuff)
 
     /* KEYBOARD */
     ImGui::BringWindowToDisplayFront(CheckboxWindow);
-    if(io.WantTextInput || LastFocus != -1)
+    GTA_RequestKeyboard(io.WantTextInput || LastFocus != -1);
+    /*if(io.WantTextInput || LastFocus != -1)
     {
         if(LastFocus == -1)
         {
@@ -204,7 +212,7 @@ DECL_HOOKv(Render2DStuff)
         ImGui::SetNextWindowBgAlpha(0.82f);
         ImGui::Begin("ImGuiKeyboard", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
 
-        io.KeysDown[ImGuiKey_Backspace] = false;
+        //io.KeysDown[ImGuiKey_Backspace] = false;
         auto KeyboardLine = [&io](const char* k)
         {
             size_t num = strlen(k), num1 = num - 1;
@@ -234,18 +242,24 @@ DECL_HOOKv(Render2DStuff)
         }
 
         // Line 2
-        KeyboardButton(io, "TAB", '\t'); // ImGuiKey_Tab
+        KeyboardButton(io, "Tab", '\t'); // ImGuiKey_Tab
         ImGui::SameLine();
         KeyboardLine(GetLineChars(2));
 
         // Line 3
-        if(KeyboardButtonNaked("CAPS"))
+        if(KeyboardButtonNaked("Caps"))
         {
             RestoreFocus();
             shift = !shift;
         }
         ImGui::SameLine();
         KeyboardLine(GetLineChars(3));
+        ImGui::SameLine();
+        if(KeyboardButtonNaked2x("Enter"))
+        {
+            RestoreFocus();
+            io.KeysDown[ImGuiKey_Enter] = true;
+        }
 
         // Line 4
         if(KeyboardButtonNaked(language == 0 ? "ENG" : "РУС"))
@@ -257,18 +271,22 @@ DECL_HOOKv(Render2DStuff)
         KeyboardLine(GetLineChars(4));
 
         // Line 5
-        if(KeyboardButtonNaked("x")) LastFocus = -1;
+        if(KeyboardButtonNaked("x"))
+        {
+            LastFocus = -1;
+            LastActive = -1;
+        }
         ImGui::SameLine();
         ImGui::Text("                                                        ");
         ImGui::SameLine();
-        KeyboardButton(io, "SPACE", ' ');
+        KeyboardButton(io, language == 0 ? "Space" : "Пробел", ' ');
 
         ImGui::SetWindowPos({0, displaySize.y - ImGui::GetWindowHeight()}, true);
         ImGui::SetWindowSize({displaySize.x, 0});
         ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
         ImGui::End();
         // Render the data
-    }
+    }*/
     ImGui::EndFrame();
     ImGui::Render();
     ImGui_ImplRenderWare_RenderDrawData(ImGui::GetDrawData());
@@ -365,6 +383,26 @@ DECL_HOOKv(OnTouchEvent, int type, int fingerId, int x, int y)
         }
     }
 }
+DECL_HOOKv(GTA_KeyboardEvent, bool pushed, int keyNum, int ctrl_or_shift, int alwaysZero)
+{
+    ImGuiIO& io = ImGui::GetIO();
+    if(io.WantTextInput)
+    {
+        logger->Info("Pressed %d", keyNum);
+        if(keyNum == 4) io.AddKeyEvent(ImGuiKey_Backspace, pushed);
+        else if(keyNum == 3) io.AddKeyEvent(ImGuiKey_Enter, pushed);
+        else if(pushed)
+        {
+            char sym = 0;
+            if(ctrl_or_shift <= 0) sym = KKtoChar[NVtoKK[keyNum]];
+            else sym = KKtoShiftedChar[NVtoKK[keyNum]];
+            
+            if(sym != 0) io.AddInputCharacter(sym);
+        }
+        //return;
+    }
+    GTA_KeyboardEvent(pushed, keyNum, ctrl_or_shift, alwaysZero);
+}
 
 extern "C" void OnModPreLoad()
 {
@@ -402,12 +440,17 @@ extern "C" void OnModPreLoad()
 extern "C" void OnModLoad()
 {
     if(!pGameLib) return;
-    if(nLoadedGTA == GTASA) // For some reason i need to hook PLT, crash. Something is broken in Substrate or... the game?
+    if(nLoadedGTA == GTASA)
     {
         HOOKPLT(InitRenderware, pGameLib + 0x66F2D0);
-        HOOKPLT(OnTouchEvent, pGameLib + 0x675DE4);
+        HOOKPLT(OnTouchEvent, pGameLib + 0x675DE4); // For some reason i need to hook PLT, crash. Something is broken in Substrate or... the game?
+        HOOKPLT(GTA_KeyboardEvent, pGameLib + 0x6709B8);
         SET_TO(m_bMenuOpened, pGameLib + 0x6E0098);
         SET_TO(m_UserPause, aml->GetSym(pGameHandle, "_ZN6CTimer11m_UserPauseE"));
+        SET_TO(GTA_RequestKeyboard, aml->GetSym(pGameHandle, "_Z18OS_KeyboardRequesti"));
+        SET_TO(NVtoKK, aml->GetSym(pGameHandle, "NVtoKK"));
+        SET_TO(KKtoChar, aml->GetSym(pGameHandle, "KKtoChar"));
+        SET_TO(KKtoShiftedChar, aml->GetSym(pGameHandle, "KKtoShiftedChar"));
     }
     else
     {
